@@ -1,3 +1,4 @@
+// Import necessary packages and modules
 import express from "express";
 import db from "../db/conn.mjs";
 import { ObjectId } from "mongodb";
@@ -5,81 +6,105 @@ import { ObjectId } from "mongodb";
 const router = express.Router();
 
 /**
- * It is not best practice to seperate these routes
- * like we have done here. This file was created
- * specifically for educational purposes, to contain
- * all aggregation routes in one place.
+ * GET route to retrieve statistics about grades
+ * Calculates number of learners with a weighted average > 70%,
+ * total number of learners, and percentage of learners with average > 70%.
  */
+router.get("/stats", async (req, res) => {
+  try {
+    const collection = await db.collection("grades");
 
-/**
- * Grading Weights by Score Type:
- * - Exams: 50%
- * - Quizes: 30%
- * - Homework: 20%
- */
-
-// Get the weighted average of a specified learner's grades, per class
-router.get("/learner/:id/avg-class", async (req, res) => {
-  let collection = await db.collection("grades");
-
-  let result = await collection
-    .aggregate([
+    // Aggregation pipeline to compute statistics
+    const result = await collection.aggregate([
       {
-        $match: { learner_id: Number(req.params.id) },
-      },
-      {
-        $unwind: { path: "$scores" },
+        $unwind: { path: "$scores" } // Deconstruct the scores array field
       },
       {
         $group: {
-          _id: "$class_id",
-          quiz: {
-            $push: {
-              $cond: {
-                if: { $eq: ["$scores.type", "quiz"] },
-                then: "$scores.score",
-                else: "$$REMOVE",
-              },
-            },
-          },
-          exam: {
-            $push: {
-              $cond: {
-                if: { $eq: ["$scores.type", "exam"] },
-                then: "$scores.score",
-                else: "$$REMOVE",
-              },
-            },
-          },
-          homework: {
-            $push: {
-              $cond: {
-                if: { $eq: ["$scores.type", "homework"] },
-                then: "$scores.score",
-                else: "$$REMOVE",
-              },
-            },
-          },
-        },
+          _id: "$learner_id", // Group by learner_id
+          avg_score: { $avg: "$scores.score" } // Calculate average score per learner
+        }
+      },
+      {
+        $match: { avg_score: { $gt: 70 } } // Filter learners with average score > 70
+      },
+      {
+        $group: {
+          _id: null, // Group all the above results together
+          count_above_70: { $sum: 1 }, // Count learners with average score > 70
+          total_count: { $sum: 1 } // Count total number of learners
+        }
       },
       {
         $project: {
           _id: 0,
-          class_id: "$_id",
-          avg: {
-            $sum: [
-              { $multiply: [{ $avg: "$exam" }, 0.5] },
-              { $multiply: [{ $avg: "$quiz" }, 0.3] },
-              { $multiply: [{ $avg: "$homework" }, 0.2] },
-            ],
-          },
-        },
-      },
-    ])
-    .toArray();
+          count_above_70: 1,
+          total_count: 1,
+          percentage_above_70: { $multiply: [{ $divide: ["$count_above_70", "$total_count"] }, 100] }
+          // Calculate the percentage of learners with average score > 70
+        }
+      }
+    ]).toArray();
 
-  if (!result) res.send("Not found").status(404);
-  else res.send(result).status(200);
+    // Send response
+    res.json(result);
+  } catch (error) {
+    console.error("Error retrieving statistics:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+/**
+ * GET route to retrieve statistics about grades for a specific class
+ * Calculates number of learners with a weighted average > 70%,
+ * total number of learners, and percentage of learners with average > 70% for a specific class_id.
+ */
+router.get("/stats/:id", async (req, res) => {
+  try {
+    const collection = await db.collection("grades");
+    const classId = Number(req.params.id);
+
+    // Aggregation pipeline to compute statistics for a specific class_id
+    const result = await collection.aggregate([
+      {
+        $match: { class_id: classId } // Match documents with the specified class_id
+      },
+      {
+        $unwind: { path: "$scores" } // Deconstruct the scores array field
+      },
+      {
+        $group: {
+          _id: "$learner_id", // Group by learner_id
+          avg_score: { $avg: "$scores.score" } // Calculate average score per learner
+        }
+      },
+      {
+        $match: { avg_score: { $gt: 70 } } // Filter learners with average score > 70
+      },
+      {
+        $group: {
+          _id: null, // Group all the above results together
+          count_above_70: { $sum: 1 }, // Count learners with average score > 70
+          total_count: { $sum: 1 } // Count total number of learners
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          count_above_70: 1,
+          total_count: 1,
+          percentage_above_70: { $multiply: [{ $divide: ["$count_above_70", "$total_count"] }, 100] }
+          // Calculate the percentage of learners with average score > 70
+        }
+      }
+    ]).toArray();
+
+    // Send response
+    res.json(result);
+  } catch (error) {
+    console.error("Error retrieving statistics:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
 });
 
 export default router;
